@@ -11,7 +11,8 @@ on:
 
 #  schedule:
 #    - cron: "10 14 * * 1-5" # every day at 14:10 run this workflow
-
+env:
+  ECR_REPOSITORY: "vprofileappimg"
 permissions:
   contents: read
 
@@ -27,11 +28,11 @@ jobs:
       - name: Maven build
         run: mvn install
 
-      - name: Upload Build Artifact (WAR)
-        uses: actions/upload-artifact@v4
-        with:
-          name: vprofile-app
-          path: target/*.war
+      #      - name: Upload Build Artifact (WAR)
+      #        uses: actions/upload-artifact@v4
+      #        with:
+      #          name: vprofile-app
+      #          path: target/*.war
 
       - name: Notify if build fails
         if: failure()
@@ -76,8 +77,41 @@ jobs:
           vuln-type: os, library
           output: trivy-results.json
 
-      - name: Upload Trivy scan results as artifact
-        uses: actions/upload-artifact@v4
+  #      - name: Upload Trivy scan results as artifact
+  #        uses: actions/upload-artifact@v4
+  #        with:
+  #          name: trivy-scan-results
+  #          path: trivy-results.json
+  BUILD_AND_PUBLISH:
+    name: BUILD and PUBLISH
+    runs-on: ubuntu-latest
+    environment: production
+    needs: [Build, Testing, Security_Scan]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Code Checkout
+        uses: actions/checkout@v4
         with:
-          name: trivy-scan-results
-          path: trivy-results.json
+        fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag and push image to AWS ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{steps.login-ecr.outputs.registry}}
+          IMAGE_TAG: ${{github.sha}}
+        run: |
+          docker build -f Docker-files/app/multistage/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+#          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
